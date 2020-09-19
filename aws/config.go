@@ -10,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	awsbase "github.com/hashicorp/aws-sdk-go-base"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/logging"
-	"github.com/manvalls/terraform-provider-wasabi/aws/internal/keyvaluetags"
 )
 
 type Config struct {
@@ -28,15 +27,13 @@ type Config struct {
 	AssumeRolePolicy            string
 	AssumeRolePolicyARNs        []string
 	AssumeRoleSessionName       string
-	AssumeRoleTags              map[string]string
 	AssumeRoleTransitiveTagKeys []string
 
 	AllowedAccountIds   []string
 	ForbiddenAccountIds []string
 
-	Endpoints        map[string]string
-	IgnoreTagsConfig *keyvaluetags.IgnoreConfig
-	Insecure         bool
+	Endpoints map[string]string
+	Insecure  bool
 
 	SkipCredsValidation     bool
 	SkipRequestingAccountId bool
@@ -50,7 +47,6 @@ type AWSClient struct {
 	accountid                 string
 	dnsSuffix                 string
 	iamconn                   *iam.IAM
-	IgnoreTagsConfig          *keyvaluetags.IgnoreConfig
 	partition                 string
 	region                    string
 	s3conn                    *s3.S3
@@ -83,7 +79,6 @@ func (c *Config) Client() (interface{}, error) {
 		AssumeRolePolicy:            c.AssumeRolePolicy,
 		AssumeRolePolicyARNs:        c.AssumeRolePolicyARNs,
 		AssumeRoleSessionName:       c.AssumeRoleSessionName,
-		AssumeRoleTags:              c.AssumeRoleTags,
 		AssumeRoleTransitiveTagKeys: c.AssumeRoleTransitiveTagKeys,
 		CallerDocumentationURL:      "https://registry.terraform.io/providers/hashicorp/aws",
 		CallerName:                  "Terraform AWS Provider",

@@ -13,7 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	"github.com/manvalls/terraform-provider-wasabi/aws/internal/keyvaluetags"
 )
 
 func resourceAwsIamRole() *schema.Resource {
@@ -107,8 +106,6 @@ func resourceAwsIamRole() *schema.Resource {
 				Default:      3600,
 				ValidateFunc: validation.IntBetween(3600, 43200),
 			},
-
-			"tags": tagsSchema(),
 		},
 	}
 }
@@ -149,10 +146,6 @@ func resourceAwsIamRoleCreate(d *schema.ResourceData, meta interface{}) error {
 		request.PermissionsBoundary = aws.String(v.(string))
 	}
 
-	if v := d.Get("tags").(map[string]interface{}); len(v) > 0 {
-		request.Tags = keyvaluetags.New(v).IgnoreAws().IamTags()
-	}
-
 	var createResp *iam.CreateRoleOutput
 	err := resource.Retry(30*time.Second, func() *resource.RetryError {
 		var err error
@@ -179,7 +172,6 @@ func resourceAwsIamRoleCreate(d *schema.ResourceData, meta interface{}) error {
 
 func resourceAwsIamRoleRead(d *schema.ResourceData, meta interface{}) error {
 	iamconn := meta.(*AWSClient).iamconn
-	ignoreTagsConfig := meta.(*AWSClient).IgnoreTagsConfig
 
 	request := &iam.GetRoleInput{
 		RoleName: aws.String(d.Id()),
@@ -215,10 +207,6 @@ func resourceAwsIamRoleRead(d *schema.ResourceData, meta interface{}) error {
 		d.Set("permissions_boundary", role.PermissionsBoundary.PermissionsBoundaryArn)
 	}
 	d.Set("unique_id", role.RoleId)
-
-	if err := d.Set("tags", keyvaluetags.IamKeyValueTags(role.Tags).IgnoreAws().IgnoreConfig(ignoreTagsConfig).Map()); err != nil {
-		return fmt.Errorf("error setting tags: %s", err)
-	}
 
 	assumRolePolicy, err := url.QueryUnescape(*role.AssumeRolePolicyDocument)
 	if err != nil {
@@ -297,14 +285,6 @@ func resourceAwsIamRoleUpdate(d *schema.ResourceData, meta interface{}) error {
 			if err != nil {
 				return fmt.Errorf("error deleting IAM Role permissions boundary: %s", err)
 			}
-		}
-	}
-
-	if d.HasChange("tags") {
-		o, n := d.GetChange("tags")
-
-		if err := keyvaluetags.IamRoleUpdateTags(iamconn, d.Id(), o, n); err != nil {
-			return fmt.Errorf("error updating IAM Role (%s) tags: %s", d.Id(), err)
 		}
 	}
 

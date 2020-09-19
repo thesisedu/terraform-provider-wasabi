@@ -5,7 +5,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 
-	"github.com/manvalls/terraform-provider-wasabi/aws/internal/keyvaluetags"
 	"github.com/manvalls/terraform-provider-wasabi/aws/internal/mutexkv"
 )
 
@@ -90,31 +89,6 @@ func Provider() *schema.Provider {
 
 			"endpoints": endpointsSchema(),
 
-			"ignore_tags": {
-				Type:        schema.TypeList,
-				Optional:    true,
-				MaxItems:    1,
-				Description: "Configuration block with settings to ignore resource tags across all resources.",
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"keys": {
-							Type:        schema.TypeSet,
-							Optional:    true,
-							Elem:        &schema.Schema{Type: schema.TypeString},
-							Set:         schema.HashString,
-							Description: "Resource tag keys to ignore across all resources.",
-						},
-						"key_prefixes": {
-							Type:        schema.TypeSet,
-							Optional:    true,
-							Elem:        &schema.Schema{Type: schema.TypeString},
-							Set:         schema.HashString,
-							Description: "Resource tag key prefixes to ignore across all resources.",
-						},
-					},
-				},
-			},
-
 			"insecure": {
 				Type:        schema.TypeBool,
 				Optional:    true,
@@ -164,31 +138,27 @@ func Provider() *schema.Provider {
 		},
 
 		ResourcesMap: map[string]*schema.Resource{
-			"wasabi_access_key":                     resourceAwsIamAccessKey(),
-			"wasabi_account_alias":                  resourceAwsIamAccountAlias(),
-			"wasabi_account_password_policy":        resourceAwsIamAccountPasswordPolicy(),
-			"wasabi_group_policy":                   resourceAwsIamGroupPolicy(),
-			"wasabi_group":                          resourceAwsIamGroup(),
-			"wasabi_group_membership":               resourceAwsIamGroupMembership(),
-			"wasabi_group_policy_attachment":        resourceAwsIamGroupPolicyAttachment(),
-			"wasabi_policy":                         resourceAwsIamPolicy(),
-			"wasabi_policy_attachment":              resourceAwsIamPolicyAttachment(),
-			"wasabi_role_policy_attachment":         resourceAwsIamRolePolicyAttachment(),
-			"wasabi_role_policy":                    resourceAwsIamRolePolicy(),
-			"wasabi_role":                           resourceAwsIamRole(),
-			"wasabi_user_group_membership":          resourceAwsIamUserGroupMembership(),
-			"wasabi_user_policy_attachment":         resourceAwsIamUserPolicyAttachment(),
-			"wasabi_user_policy":                    resourceAwsIamUserPolicy(),
-			"wasabi_user":                           resourceAwsIamUser(),
-			"wasabi_user_login_profile":             resourceAwsIamUserLoginProfile(),
-			"wasabi_bucket":                         resourceAwsS3Bucket(),
-			"wasabi_bucket_analytics_configuration": resourceAwsS3BucketAnalyticsConfiguration(),
-			"wasabi_bucket_policy":                  resourceAwsS3BucketPolicy(),
-			"wasabi_bucket_public_access_block":     resourceAwsS3BucketPublicAccessBlock(),
-			"wasabi_bucket_object":                  resourceAwsS3BucketObject(),
-			"wasabi_bucket_notification":            resourceAwsS3BucketNotification(),
-			"wasabi_bucket_metric":                  resourceAwsS3BucketMetric(),
-			"wasabi_bucket_inventory":               resourceAwsS3BucketInventory(),
+			"wasabi_access_key":                 resourceAwsIamAccessKey(),
+			"wasabi_account_alias":              resourceAwsIamAccountAlias(),
+			"wasabi_account_password_policy":    resourceAwsIamAccountPasswordPolicy(),
+			"wasabi_group_policy":               resourceAwsIamGroupPolicy(),
+			"wasabi_group":                      resourceAwsIamGroup(),
+			"wasabi_group_membership":           resourceAwsIamGroupMembership(),
+			"wasabi_group_policy_attachment":    resourceAwsIamGroupPolicyAttachment(),
+			"wasabi_policy":                     resourceAwsIamPolicy(),
+			"wasabi_policy_attachment":          resourceAwsIamPolicyAttachment(),
+			"wasabi_role_policy_attachment":     resourceAwsIamRolePolicyAttachment(),
+			"wasabi_role_policy":                resourceAwsIamRolePolicy(),
+			"wasabi_role":                       resourceAwsIamRole(),
+			"wasabi_user_group_membership":      resourceAwsIamUserGroupMembership(),
+			"wasabi_user_policy_attachment":     resourceAwsIamUserPolicyAttachment(),
+			"wasabi_user_policy":                resourceAwsIamUserPolicy(),
+			"wasabi_user":                       resourceAwsIamUser(),
+			"wasabi_user_login_profile":         resourceAwsIamUserLoginProfile(),
+			"wasabi_bucket":                     resourceAwsS3Bucket(),
+			"wasabi_bucket_policy":              resourceAwsS3BucketPolicy(),
+			"wasabi_bucket_public_access_block": resourceAwsS3BucketPublicAccessBlock(),
+			"wasabi_bucket_object":              resourceAwsS3BucketObject(),
 		},
 	}
 
@@ -275,7 +245,6 @@ func providerConfigure(d *schema.ResourceData, terraformVersion string) (interfa
 			"s3":  "https://s3." + region + ".wasabisys.com",
 		},
 		MaxRetries:              d.Get("max_retries").(int),
-		IgnoreTagsConfig:        expandProviderIgnoreTags(d.Get("ignore_tags").([]interface{})),
 		Insecure:                d.Get("insecure").(bool),
 		SkipCredsValidation:     d.Get("skip_credentials_validation").(bool),
 		SkipRequestingAccountId: d.Get("skip_requesting_account_id").(bool),
@@ -317,20 +286,6 @@ func providerConfigure(d *schema.ResourceData, terraformVersion string) (interfa
 
 		if v, ok := m["session_name"].(string); ok && v != "" {
 			config.AssumeRoleSessionName = v
-		}
-
-		if tagMapRaw, ok := m["tags"].(map[string]interface{}); ok && len(tagMapRaw) > 0 {
-			config.AssumeRoleTags = make(map[string]string)
-
-			for k, vRaw := range tagMapRaw {
-				v, ok := vRaw.(string)
-
-				if !ok {
-					continue
-				}
-
-				config.AssumeRoleTags[k] = v
-			}
 		}
 
 		if transitiveTagKeySet, ok := m["transitive_tag_keys"].(*schema.Set); ok && transitiveTagKeySet.Len() > 0 {
@@ -413,12 +368,6 @@ func assumeRoleSchema() *schema.Schema {
 					Optional:    true,
 					Description: "Identifier for the assumed role session.",
 				},
-				"tags": {
-					Type:        schema.TypeMap,
-					Optional:    true,
-					Description: "Assume role session tags.",
-					Elem:        &schema.Schema{Type: schema.TypeString},
-				},
 				"transitive_tag_keys": {
 					Type:        schema.TypeSet,
 					Optional:    true,
@@ -449,23 +398,4 @@ func endpointsSchema() *schema.Schema {
 			Schema: endpointsAttributes,
 		},
 	}
-}
-
-func expandProviderIgnoreTags(l []interface{}) *keyvaluetags.IgnoreConfig {
-	if len(l) == 0 || l[0] == nil {
-		return nil
-	}
-
-	ignoreConfig := &keyvaluetags.IgnoreConfig{}
-	m := l[0].(map[string]interface{})
-
-	if v, ok := m["keys"].(*schema.Set); ok {
-		ignoreConfig.Keys = keyvaluetags.New(v.List())
-	}
-
-	if v, ok := m["key_prefixes"].(*schema.Set); ok {
-		ignoreConfig.KeyPrefixes = keyvaluetags.New(v.List())
-	}
-
-	return ignoreConfig
 }

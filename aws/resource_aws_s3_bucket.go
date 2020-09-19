@@ -23,7 +23,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/structure"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/manvalls/terraform-provider-wasabi/aws/internal/hashcode"
-	"github.com/manvalls/terraform-provider-wasabi/aws/internal/keyvaluetags"
 )
 
 const s3BucketCreationTimeout = 2 * time.Minute
@@ -281,7 +280,6 @@ func resourceAwsS3Bucket() *schema.Resource {
 							Type:     schema.TypeString,
 							Optional: true,
 						},
-						"tags": tagsSchema(),
 						"enabled": {
 							Type:     schema.TypeBool,
 							Required: true,
@@ -497,8 +495,6 @@ func resourceAwsS3Bucket() *schema.Resource {
 					},
 				},
 			},
-
-			"tags": tagsSchema(),
 		},
 	}
 }
@@ -581,19 +577,6 @@ func resourceAwsS3BucketCreate(d *schema.ResourceData, meta interface{}) error {
 func resourceAwsS3BucketUpdate(d *schema.ResourceData, meta interface{}) error {
 	s3conn := meta.(*AWSClient).s3conn
 
-	if d.HasChange("tags") {
-		o, n := d.GetChange("tags")
-
-		// Retry due to S3 eventual consistency
-		_, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-			terr := keyvaluetags.S3BucketUpdateTags(s3conn, d.Id(), o, n)
-			return nil, terr
-		})
-		if err != nil {
-			return fmt.Errorf("error updating S3 Bucket (%s) tags: %s", d.Id(), err)
-		}
-	}
-
 	if d.HasChange("policy") {
 		if err := resourceAwsS3BucketPolicyUpdate(s3conn, d); err != nil {
 			return err
@@ -670,7 +653,6 @@ func resourceAwsS3BucketUpdate(d *schema.ResourceData, meta interface{}) error {
 
 func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 	s3conn := meta.(*AWSClient).s3conn
-	ignoreTagsConfig := meta.(*AWSClient).IgnoreTagsConfig
 
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(d.Id()),
@@ -982,18 +964,10 @@ func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 					if filter.And.Prefix != nil && aws.StringValue(filter.And.Prefix) != "" {
 						rule["prefix"] = aws.StringValue(filter.And.Prefix)
 					}
-					// Tag
-					if len(filter.And.Tags) > 0 {
-						rule["tags"] = keyvaluetags.S3KeyValueTags(filter.And.Tags).IgnoreAws().Map()
-					}
 				} else {
 					// Prefix
 					if filter.Prefix != nil && aws.StringValue(filter.Prefix) != "" {
 						rule["prefix"] = aws.StringValue(filter.Prefix)
-					}
-					// Tag
-					if filter.Tag != nil {
-						rule["tags"] = keyvaluetags.S3KeyValueTags([]*s3.Tag{filter.Tag}).IgnoreAws().Map()
 					}
 				}
 			} else {
@@ -1147,19 +1121,6 @@ func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 		if err := d.Set("website_domain", websiteEndpoint.Domain); err != nil {
 			return err
 		}
-	}
-
-	// Retry due to S3 eventual consistency
-	tags, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return keyvaluetags.S3BucketListTags(s3conn, d.Id())
-	})
-
-	if err != nil {
-		return fmt.Errorf("error listing tags for S3 Bucket (%s): %s", d.Id(), err)
-	}
-
-	if err := d.Set("tags", tags.(keyvaluetags.KeyValueTags).IgnoreAws().IgnoreConfig(ignoreTagsConfig).Map()); err != nil {
-		return fmt.Errorf("error setting tags: %s", err)
 	}
 
 	arn := arn.ARN{
@@ -1825,16 +1786,8 @@ func resourceAwsS3BucketLifecycleUpdate(s3conn *s3.S3, d *schema.ResourceData) e
 		rule := &s3.LifecycleRule{}
 
 		// Filter
-		tags := keyvaluetags.New(r["tags"]).IgnoreAws().S3Tags()
 		filter := &s3.LifecycleRuleFilter{}
-		if len(tags) > 0 {
-			lifecycleRuleAndOp := &s3.LifecycleRuleAndOperator{}
-			lifecycleRuleAndOp.SetPrefix(r["prefix"].(string))
-			lifecycleRuleAndOp.SetTags(tags)
-			filter.SetAnd(lifecycleRuleAndOp)
-		} else {
-			filter.SetPrefix(r["prefix"].(string))
-		}
+		filter.SetPrefix(r["prefix"].(string))
 		rule.SetFilter(filter)
 
 		// ID
@@ -2149,9 +2102,6 @@ func replicationRuleFilterHash(v interface{}) int {
 
 	if v, ok := m["prefix"]; ok {
 		buf.WriteString(fmt.Sprintf("%s-", v.(string)))
-	}
-	if v, ok := m["tags"]; ok {
-		buf.WriteString(fmt.Sprintf("%d-", keyvaluetags.New(v).Hash()))
 	}
 	return hashcode.String(buf.String())
 }
