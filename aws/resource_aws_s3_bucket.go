@@ -22,8 +22,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/structure"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	"github.com/terraform-providers/terraform-provider-aws/aws/internal/hashcode"
-	"github.com/terraform-providers/terraform-provider-aws/aws/internal/keyvaluetags"
+	"github.com/manvalls/terraform-provider-wasabi/aws/internal/hashcode"
+	"github.com/manvalls/terraform-provider-wasabi/aws/internal/keyvaluetags"
 )
 
 const s3BucketCreationTimeout = 2 * time.Minute
@@ -400,145 +400,6 @@ func resourceAwsS3Bucket() *schema.Resource {
 				}, false),
 			},
 
-			"replication_configuration": {
-				Type:     schema.TypeList,
-				Optional: true,
-				MaxItems: 1,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"role": {
-							Type:     schema.TypeString,
-							Required: true,
-						},
-						"rules": {
-							Type:     schema.TypeSet,
-							Required: true,
-							Set:      rulesHash,
-							Elem: &schema.Resource{
-								Schema: map[string]*schema.Schema{
-									"id": {
-										Type:         schema.TypeString,
-										Optional:     true,
-										ValidateFunc: validation.StringLenBetween(0, 255),
-									},
-									"destination": {
-										Type:     schema.TypeList,
-										MaxItems: 1,
-										MinItems: 1,
-										Required: true,
-										Elem: &schema.Resource{
-											Schema: map[string]*schema.Schema{
-												"account_id": {
-													Type:         schema.TypeString,
-													Optional:     true,
-													ValidateFunc: validateAwsAccountId,
-												},
-												"bucket": {
-													Type:         schema.TypeString,
-													Required:     true,
-													ValidateFunc: validateArn,
-												},
-												"storage_class": {
-													Type:     schema.TypeString,
-													Optional: true,
-													ValidateFunc: validation.StringInSlice([]string{
-														s3.StorageClassStandard,
-														s3.StorageClassReducedRedundancy,
-														s3.StorageClassStandardIa,
-														s3.StorageClassOnezoneIa,
-														s3.StorageClassIntelligentTiering,
-														s3.StorageClassGlacier,
-														s3.StorageClassDeepArchive,
-													}, false),
-												},
-												"replica_kms_key_id": {
-													Type:     schema.TypeString,
-													Optional: true,
-												},
-												"access_control_translation": {
-													Type:     schema.TypeList,
-													Optional: true,
-													MinItems: 1,
-													MaxItems: 1,
-													Elem: &schema.Resource{
-														Schema: map[string]*schema.Schema{
-															"owner": {
-																Type:     schema.TypeString,
-																Required: true,
-																ValidateFunc: validation.StringInSlice([]string{
-																	s3.OwnerOverrideDestination,
-																}, false),
-															},
-														},
-													},
-												},
-											},
-										},
-									},
-									"source_selection_criteria": {
-										Type:     schema.TypeList,
-										Optional: true,
-										MinItems: 1,
-										MaxItems: 1,
-										Elem: &schema.Resource{
-											Schema: map[string]*schema.Schema{
-												"sse_kms_encrypted_objects": {
-													Type:     schema.TypeList,
-													Optional: true,
-													MinItems: 1,
-													MaxItems: 1,
-													Elem: &schema.Resource{
-														Schema: map[string]*schema.Schema{
-															"enabled": {
-																Type:     schema.TypeBool,
-																Required: true,
-															},
-														},
-													},
-												},
-											},
-										},
-									},
-									"prefix": {
-										Type:         schema.TypeString,
-										Optional:     true,
-										ValidateFunc: validation.StringLenBetween(0, 1024),
-									},
-									"status": {
-										Type:     schema.TypeString,
-										Required: true,
-										ValidateFunc: validation.StringInSlice([]string{
-											s3.ReplicationRuleStatusEnabled,
-											s3.ReplicationRuleStatusDisabled,
-										}, false),
-									},
-									"priority": {
-										Type:     schema.TypeInt,
-										Optional: true,
-									},
-									"filter": {
-										Type:     schema.TypeList,
-										Optional: true,
-										MinItems: 1,
-										MaxItems: 1,
-										Elem: &schema.Resource{
-											Schema: map[string]*schema.Schema{
-												"prefix": {
-													Type:         schema.TypeString,
-													Optional:     true,
-													ValidateFunc: validation.StringLenBetween(0, 1024),
-												},
-												"tags": tagsSchema(),
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-
 			"server_side_encryption_configuration": {
 				Type:     schema.TypeList,
 				MaxItems: 1,
@@ -788,12 +649,6 @@ func resourceAwsS3BucketUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	if d.HasChange("request_payer") {
 		if err := resourceAwsS3BucketRequestPayerUpdate(s3conn, d); err != nil {
-			return err
-		}
-	}
-
-	if d.HasChange("replication_configuration") {
-		if err := resourceAwsS3BucketReplicationConfigurationUpdate(s3conn, d); err != nil {
 			return err
 		}
 	}
@@ -1226,25 +1081,6 @@ func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 		return fmt.Errorf("error setting lifecycle_rule: %s", err)
 	}
 
-	// Read the bucket replication configuration
-
-	replicationResponse, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return s3conn.GetBucketReplication(&s3.GetBucketReplicationInput{
-			Bucket: aws.String(d.Id()),
-		})
-	})
-	if err != nil && !isAWSErr(err, "ReplicationConfigurationNotFoundError", "") {
-		return fmt.Errorf("error getting S3 Bucket replication: %s", err)
-	}
-
-	replicationConfiguration := make([]map[string]interface{}, 0)
-	if replication, ok := replicationResponse.(*s3.GetBucketReplicationOutput); ok {
-		replicationConfiguration = flattenAwsS3BucketReplicationConfiguration(replication.ReplicationConfiguration)
-	}
-	if err := d.Set("replication_configuration", replicationConfiguration); err != nil {
-		return fmt.Errorf("error setting replication_configuration: %s", err)
-	}
-
 	// Read the bucket server side encryption configuration
 
 	encryptionResponse, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
@@ -1298,14 +1134,6 @@ func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 	d.Set("bucket_regional_domain_name", regionalEndpoint)
-
-	// Add the hosted zone ID for this bucket's region as an attribute
-	hostedZoneID, err := HostedZoneIDForRegion(region)
-	if err != nil {
-		log.Printf("[WARN] %s", err)
-	} else {
-		d.Set("hosted_zone_id", hostedZoneID)
-	}
 
 	// Add website_endpoint as an attribute
 	websiteEndpoint, err := websiteEndpoint(meta.(*AWSClient), d)
@@ -1943,7 +1771,7 @@ func resourceAwsS3BucketServerSideEncryptionConfigurationUpdate(s3conn *s3.S3, d
 		Bucket:                            aws.String(bucket),
 		ServerSideEncryptionConfiguration: rc,
 	}
-	log.Printf("[DEBUG] S3 put bucket replication configuration: %#v", i)
+	log.Printf("[DEBUG] S3 put bucket encryption configuration: %#v", i)
 
 	_, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
 		return s3conn.PutBucketEncryption(i)
@@ -1967,160 +1795,6 @@ func resourceAwsS3BucketObjectLockConfigurationUpdate(s3conn *s3.S3, d *schema.R
 	})
 	if err != nil {
 		return fmt.Errorf("error putting S3 object lock configuration: %s", err)
-	}
-
-	return nil
-}
-
-func resourceAwsS3BucketReplicationConfigurationUpdate(s3conn *s3.S3, d *schema.ResourceData) error {
-	bucket := d.Get("bucket").(string)
-	replicationConfiguration := d.Get("replication_configuration").([]interface{})
-
-	if len(replicationConfiguration) == 0 {
-		i := &s3.DeleteBucketReplicationInput{
-			Bucket: aws.String(bucket),
-		}
-
-		_, err := s3conn.DeleteBucketReplication(i)
-		if err != nil {
-			return fmt.Errorf("Error removing S3 bucket replication: %s", err)
-		}
-		return nil
-	}
-
-	hasVersioning := false
-	// Validate that bucket versioning is enabled
-	if versioning, ok := d.GetOk("versioning"); ok {
-		v := versioning.([]interface{})
-
-		if v[0].(map[string]interface{})["enabled"].(bool) {
-			hasVersioning = true
-		}
-	}
-
-	if !hasVersioning {
-		return fmt.Errorf("versioning must be enabled to allow S3 bucket replication")
-	}
-
-	c := replicationConfiguration[0].(map[string]interface{})
-
-	rc := &s3.ReplicationConfiguration{}
-	if val, ok := c["role"]; ok {
-		rc.Role = aws.String(val.(string))
-	}
-
-	rcRules := c["rules"].(*schema.Set).List()
-	rules := []*s3.ReplicationRule{}
-	for _, v := range rcRules {
-		rr := v.(map[string]interface{})
-		rcRule := &s3.ReplicationRule{}
-		if status, ok := rr["status"]; ok && status != "" {
-			rcRule.Status = aws.String(status.(string))
-		} else {
-			continue
-		}
-
-		if rrid, ok := rr["id"]; ok && rrid != "" {
-			rcRule.ID = aws.String(rrid.(string))
-		}
-
-		ruleDestination := &s3.Destination{}
-		if dest, ok := rr["destination"].([]interface{}); ok && len(dest) > 0 {
-			if dest[0] != nil {
-				bd := dest[0].(map[string]interface{})
-				ruleDestination.Bucket = aws.String(bd["bucket"].(string))
-
-				if storageClass, ok := bd["storage_class"]; ok && storageClass != "" {
-					ruleDestination.StorageClass = aws.String(storageClass.(string))
-				}
-
-				if replicaKmsKeyId, ok := bd["replica_kms_key_id"]; ok && replicaKmsKeyId != "" {
-					ruleDestination.EncryptionConfiguration = &s3.EncryptionConfiguration{
-						ReplicaKmsKeyID: aws.String(replicaKmsKeyId.(string)),
-					}
-				}
-
-				if account, ok := bd["account_id"]; ok && account != "" {
-					ruleDestination.Account = aws.String(account.(string))
-				}
-
-				if aclTranslation, ok := bd["access_control_translation"].([]interface{}); ok && len(aclTranslation) > 0 {
-					aclTranslationValues := aclTranslation[0].(map[string]interface{})
-					ruleAclTranslation := &s3.AccessControlTranslation{}
-					ruleAclTranslation.Owner = aws.String(aclTranslationValues["owner"].(string))
-					ruleDestination.AccessControlTranslation = ruleAclTranslation
-				}
-			}
-		}
-		rcRule.Destination = ruleDestination
-
-		if ssc, ok := rr["source_selection_criteria"].([]interface{}); ok && len(ssc) > 0 {
-			if ssc[0] != nil {
-				sscValues := ssc[0].(map[string]interface{})
-				ruleSsc := &s3.SourceSelectionCriteria{}
-				if sseKms, ok := sscValues["sse_kms_encrypted_objects"].([]interface{}); ok && len(sseKms) > 0 {
-					if sseKms[0] != nil {
-						sseKmsValues := sseKms[0].(map[string]interface{})
-						sseKmsEncryptedObjects := &s3.SseKmsEncryptedObjects{}
-						if sseKmsValues["enabled"].(bool) {
-							sseKmsEncryptedObjects.Status = aws.String(s3.SseKmsEncryptedObjectsStatusEnabled)
-						} else {
-							sseKmsEncryptedObjects.Status = aws.String(s3.SseKmsEncryptedObjectsStatusDisabled)
-						}
-						ruleSsc.SseKmsEncryptedObjects = sseKmsEncryptedObjects
-					}
-				}
-				rcRule.SourceSelectionCriteria = ruleSsc
-			}
-		}
-
-		if f, ok := rr["filter"].([]interface{}); ok && len(f) > 0 && f[0] != nil {
-			// XML schema V2.
-			rcRule.Priority = aws.Int64(int64(rr["priority"].(int)))
-			rcRule.Filter = &s3.ReplicationRuleFilter{}
-			filter := f[0].(map[string]interface{})
-			tags := keyvaluetags.New(filter["tags"]).IgnoreAws().S3Tags()
-			if len(tags) > 0 {
-				rcRule.Filter.And = &s3.ReplicationRuleAndOperator{
-					Prefix: aws.String(filter["prefix"].(string)),
-					Tags:   tags,
-				}
-			} else {
-				rcRule.Filter.Prefix = aws.String(filter["prefix"].(string))
-			}
-			rcRule.DeleteMarkerReplication = &s3.DeleteMarkerReplication{
-				Status: aws.String(s3.DeleteMarkerReplicationStatusDisabled),
-			}
-		} else {
-			// XML schema V1.
-			rcRule.Prefix = aws.String(rr["prefix"].(string))
-		}
-
-		rules = append(rules, rcRule)
-	}
-
-	rc.Rules = rules
-	i := &s3.PutBucketReplicationInput{
-		Bucket:                   aws.String(bucket),
-		ReplicationConfiguration: rc,
-	}
-	log.Printf("[DEBUG] S3 put bucket replication configuration: %#v", i)
-
-	err := resource.Retry(1*time.Minute, func() *resource.RetryError {
-		_, err := s3conn.PutBucketReplication(i)
-		if isAWSErr(err, s3.ErrCodeNoSuchBucket, "") || isAWSErr(err, "InvalidRequest", "Versioning must be 'Enabled' on the bucket") {
-			return resource.RetryableError(err)
-		}
-		if err != nil {
-			return resource.NonRetryableError(err)
-		}
-		return nil
-	})
-	if isResourceTimeoutError(err) {
-		_, err = s3conn.PutBucketReplication(i)
-	}
-	if err != nil {
-		return fmt.Errorf("Error putting S3 replication configuration: %s", err)
 	}
 
 	return nil
@@ -2301,98 +1975,6 @@ func flattenAwsS3ServerSideEncryptionConfiguration(c *s3.ServerSideEncryptionCon
 		"rule": rules,
 	})
 	return encryptionConfiguration
-}
-
-func flattenAwsS3BucketReplicationConfiguration(r *s3.ReplicationConfiguration) []map[string]interface{} {
-	replication_configuration := make([]map[string]interface{}, 0, 1)
-
-	if r == nil {
-		return replication_configuration
-	}
-
-	m := make(map[string]interface{})
-
-	if r.Role != nil && aws.StringValue(r.Role) != "" {
-		m["role"] = aws.StringValue(r.Role)
-	}
-
-	rules := make([]interface{}, 0, len(r.Rules))
-	for _, v := range r.Rules {
-		t := make(map[string]interface{})
-		if v.Destination != nil {
-			rd := make(map[string]interface{})
-			if v.Destination.Bucket != nil {
-				rd["bucket"] = aws.StringValue(v.Destination.Bucket)
-			}
-			if v.Destination.StorageClass != nil {
-				rd["storage_class"] = aws.StringValue(v.Destination.StorageClass)
-			}
-			if v.Destination.EncryptionConfiguration != nil {
-				if v.Destination.EncryptionConfiguration.ReplicaKmsKeyID != nil {
-					rd["replica_kms_key_id"] = aws.StringValue(v.Destination.EncryptionConfiguration.ReplicaKmsKeyID)
-				}
-			}
-			if v.Destination.Account != nil {
-				rd["account_id"] = aws.StringValue(v.Destination.Account)
-			}
-			if v.Destination.AccessControlTranslation != nil {
-				rdt := map[string]interface{}{
-					"owner": aws.StringValue(v.Destination.AccessControlTranslation.Owner),
-				}
-				rd["access_control_translation"] = []interface{}{rdt}
-			}
-			t["destination"] = []interface{}{rd}
-		}
-
-		if v.ID != nil {
-			t["id"] = aws.StringValue(v.ID)
-		}
-		if v.Prefix != nil {
-			t["prefix"] = aws.StringValue(v.Prefix)
-		}
-		if v.Status != nil {
-			t["status"] = aws.StringValue(v.Status)
-		}
-		if vssc := v.SourceSelectionCriteria; vssc != nil {
-			tssc := make(map[string]interface{})
-			if vssc.SseKmsEncryptedObjects != nil {
-				tSseKms := make(map[string]interface{})
-				if aws.StringValue(vssc.SseKmsEncryptedObjects.Status) == s3.SseKmsEncryptedObjectsStatusEnabled {
-					tSseKms["enabled"] = true
-				} else if aws.StringValue(vssc.SseKmsEncryptedObjects.Status) == s3.SseKmsEncryptedObjectsStatusDisabled {
-					tSseKms["enabled"] = false
-				}
-				tssc["sse_kms_encrypted_objects"] = []interface{}{tSseKms}
-			}
-			t["source_selection_criteria"] = []interface{}{tssc}
-		}
-
-		if v.Priority != nil {
-			t["priority"] = int(aws.Int64Value(v.Priority))
-		}
-
-		if f := v.Filter; f != nil {
-			m := map[string]interface{}{}
-			if f.Prefix != nil {
-				m["prefix"] = aws.StringValue(f.Prefix)
-			}
-			if t := f.Tag; t != nil {
-				m["tags"] = keyvaluetags.S3KeyValueTags([]*s3.Tag{t}).IgnoreAws().Map()
-			}
-			if a := f.And; a != nil {
-				m["prefix"] = aws.StringValue(a.Prefix)
-				m["tags"] = keyvaluetags.S3KeyValueTags(a.Tags).IgnoreAws().Map()
-			}
-			t["filter"] = []interface{}{m}
-		}
-
-		rules = append(rules, t)
-	}
-	m["rules"] = schema.NewSet(rulesHash, rules)
-
-	replication_configuration = append(replication_configuration, m)
-
-	return replication_configuration
 }
 
 func normalizeRoutingRules(w []*s3.RoutingRule) (string, error) {

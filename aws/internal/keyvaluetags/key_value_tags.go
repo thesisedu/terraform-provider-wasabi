@@ -13,7 +13,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/terraform-providers/terraform-provider-aws/aws/internal/hashcode"
+	"github.com/manvalls/terraform-provider-wasabi/aws/internal/hashcode"
 )
 
 const (

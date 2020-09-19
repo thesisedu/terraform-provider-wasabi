@@ -108,13 +108,6 @@ func bucketLocation(client *AWSClient, d *schema.ResourceData, bucket string) er
 		return err
 	}
 
-	hostedZoneID, err := HostedZoneIDForRegion(region)
-	if err != nil {
-		log.Printf("[WARN] %s", err)
-	} else {
-		d.Set("hosted_zone_id", hostedZoneID)
-	}
-
 	_, websiteErr := client.s3conn.GetBucketWebsite(
 		&s3.GetBucketWebsiteInput{
 			Bucket: aws.String(bucket),

@@ -168,7 +168,6 @@ func resourceAwsS3BucketInventory() *schema.Resource {
 						s3.InventoryOptionalFieldStorageClass,
 						s3.InventoryOptionalFieldEtag,
 						s3.InventoryOptionalFieldIsMultipartUploaded,
-						s3.InventoryOptionalFieldReplicationStatus,
 						s3.InventoryOptionalFieldEncryptionStatus,
 						s3.InventoryOptionalFieldObjectLockMode,
 						s3.InventoryOptionalFieldObjectLockRetainUntilDate,

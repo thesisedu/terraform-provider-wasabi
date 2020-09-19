@@ -13,12 +13,11 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/service/kms"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"github.com/manvalls/terraform-provider-wasabi/aws/internal/keyvaluetags"
 	"github.com/mitchellh/go-homedir"
-	"github.com/terraform-providers/terraform-provider-aws/aws/internal/keyvaluetags"
 )
 
 func resourceAwsS3BucketObject() *schema.Resource {
@@ -131,25 +130,17 @@ func resourceAwsS3BucketObject() *schema.Resource {
 				Optional: true,
 				ValidateFunc: validation.StringInSlice([]string{
 					s3.ServerSideEncryptionAes256,
-					s3.ServerSideEncryptionAwsKms,
 				}, false),
 				Computed: true,
 			},
 
-			"kms_key_id": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				ValidateFunc: validateArn,
-			},
-
 			"etag": {
 				Type: schema.TypeString,
-				// This will conflict with SSE-C and SSE-KMS encryption and multi-part upload
+				// This will conflict with SSE-C and multi-part upload
 				// if/when it's actually implemented. The Etag then won't match raw-file MD5.
 				// See http://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonResponseHeaders.html
-				Optional:      true,
-				Computed:      true,
-				ConflictsWith: []string{"kms_key_id"},
+				Optional: true,
+				Computed: true,
 			},
 
 			"version_id": {
@@ -276,11 +267,6 @@ func resourceAwsS3BucketObjectPut(d *schema.ResourceData, meta interface{}) erro
 		putInput.ServerSideEncryption = aws.String(v.(string))
 	}
 
-	if v, ok := d.GetOk("kms_key_id"); ok {
-		putInput.SSEKMSKeyId = aws.String(v.(string))
-		putInput.ServerSideEncryption = aws.String(s3.ServerSideEncryptionAwsKms)
-	}
-
 	if v := d.Get("tags").(map[string]interface{}); len(v) > 0 {
 		// The tag-set must be encoded as URL Query parameters.
 		putInput.Tagging = aws.String(keyvaluetags.New(v).IgnoreAws().UrlEncode())
@@ -361,22 +347,6 @@ func resourceAwsS3BucketObjectRead(d *schema.ResourceData, meta interface{}) err
 	d.Set("object_lock_mode", resp.ObjectLockMode)
 	d.Set("object_lock_retain_until_date", flattenS3ObjectLockRetainUntilDate(resp.ObjectLockRetainUntilDate))
 
-	// Only set non-default KMS key ID (one that doesn't match default)
-	if resp.SSEKMSKeyId != nil {
-		// retrieve S3 KMS Default Master Key
-		kmsconn := meta.(*AWSClient).kmsconn
-		kmsresp, err := kmsconn.DescribeKey(&kms.DescribeKeyInput{
-			KeyId: aws.String("alias/aws/s3"),
-		})
-		if err != nil {
-			return fmt.Errorf("Failed to describe default S3 KMS key (alias/aws/s3): %s", err)
-		}
-
-		if *resp.SSEKMSKeyId != *kmsresp.KeyMetadata.Arn {
-			log.Printf("[DEBUG] S3 object is encrypted using a non-default KMS Key ID: %s", *resp.SSEKMSKeyId)
-			d.Set("kms_key_id", resp.SSEKMSKeyId)
-		}
-	}
 	// See https://forums.aws.amazon.com/thread.jspa?threadID=44003
 	d.Set("etag", strings.Trim(aws.StringValue(resp.ETag), `"`))
 
@@ -414,7 +384,6 @@ func resourceAwsS3BucketObjectUpdate(d *schema.ResourceData, meta interface{}) e
 		"content_type",
 		"content",
 		"etag",
-		"kms_key_id",
 		"metadata",
 		"server_side_encryption",
 		"source",
