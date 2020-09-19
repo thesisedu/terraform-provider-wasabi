@@ -137,11 +137,6 @@ func resourceAwsS3BucketObject() *schema.Resource {
 				Computed: true,
 			},
 
-			"website_redirect": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-
 			"force_destroy": {
 				Type:     schema.TypeBool,
 				Optional: true,
@@ -226,10 +221,6 @@ func resourceAwsS3BucketObjectPut(d *schema.ResourceData, meta interface{}) erro
 		putInput.ContentDisposition = aws.String(v.(string))
 	}
 
-	if v, ok := d.GetOk("website_redirect"); ok {
-		putInput.WebsiteRedirectLocation = aws.String(v.(string))
-	}
-
 	if _, err := s3conn.PutObject(putInput); err != nil {
 		return fmt.Errorf("Error putting object in S3 bucket (%s): %s", bucket, err)
 	}
@@ -282,7 +273,6 @@ func resourceAwsS3BucketObjectRead(d *schema.ResourceData, meta interface{}) err
 		return fmt.Errorf("error setting metadata: %s", err)
 	}
 	d.Set("version_id", resp.VersionId)
-	d.Set("website_redirect", resp.WebsiteRedirectLocation)
 
 	// See https://forums.aws.amazon.com/thread.jspa?threadID=44003
 	d.Set("etag", strings.Trim(aws.StringValue(resp.ETag), `"`))
@@ -311,7 +301,6 @@ func resourceAwsS3BucketObjectUpdate(d *schema.ResourceData, meta interface{}) e
 		"metadata",
 		"source",
 		"storage_class",
-		"website_redirect",
 	} {
 		if d.HasChange(key) {
 			return resourceAwsS3BucketObjectPut(d, meta)

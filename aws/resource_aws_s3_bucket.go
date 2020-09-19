@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -160,45 +159,6 @@ func resourceAwsS3Bucket() *schema.Resource {
 				},
 			},
 
-			"website": {
-				Type:     schema.TypeList,
-				Optional: true,
-				MaxItems: 1,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"index_document": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-
-						"error_document": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-
-						"redirect_all_requests_to": {
-							Type: schema.TypeString,
-							ConflictsWith: []string{
-								"website.0.index_document",
-								"website.0.error_document",
-								"website.0.routing_rules",
-							},
-							Optional: true,
-						},
-
-						"routing_rules": {
-							Type:         schema.TypeString,
-							Optional:     true,
-							ValidateFunc: validation.StringIsJSON,
-							StateFunc: func(v interface{}) string {
-								json, _ := structure.NormalizeJsonString(v)
-								return json
-							},
-						},
-					},
-				},
-			},
-
 			"hosted_zone_id": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -207,16 +167,6 @@ func resourceAwsS3Bucket() *schema.Resource {
 
 			"region": {
 				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"website_endpoint": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Computed: true,
-			},
-			"website_domain": {
-				Type:     schema.TypeString,
-				Optional: true,
 				Computed: true,
 			},
 
@@ -485,12 +435,6 @@ func resourceAwsS3BucketUpdate(d *schema.ResourceData, meta interface{}) error {
 		}
 	}
 
-	if d.HasChange("website") {
-		if err := resourceAwsS3BucketWebsiteUpdate(s3conn, d); err != nil {
-			return err
-		}
-	}
-
 	if d.HasChange("versioning") {
 		if err := resourceAwsS3BucketVersioningUpdate(s3conn, d); err != nil {
 			return err
@@ -660,72 +604,6 @@ func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 	}
 	if err := d.Set("cors_rule", corsRules); err != nil {
 		return fmt.Errorf("error setting cors_rule: %s", err)
-	}
-
-	// Read the website configuration
-	wsResponse, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return s3conn.GetBucketWebsite(&s3.GetBucketWebsiteInput{
-			Bucket: aws.String(d.Id()),
-		})
-	})
-	if err != nil && !isAWSErr(err, "NotImplemented", "") && !isAWSErr(err, "NoSuchWebsiteConfiguration", "") {
-		return fmt.Errorf("error getting S3 Bucket website configuration: %s", err)
-	}
-
-	websites := make([]map[string]interface{}, 0, 1)
-	if ws, ok := wsResponse.(*s3.GetBucketWebsiteOutput); ok {
-		w := make(map[string]interface{})
-
-		if v := ws.IndexDocument; v != nil {
-			w["index_document"] = aws.StringValue(v.Suffix)
-		}
-
-		if v := ws.ErrorDocument; v != nil {
-			w["error_document"] = aws.StringValue(v.Key)
-		}
-
-		if v := ws.RedirectAllRequestsTo; v != nil {
-			if v.Protocol == nil {
-				w["redirect_all_requests_to"] = aws.StringValue(v.HostName)
-			} else {
-				var host string
-				var path string
-				var query string
-				parsedHostName, err := url.Parse(aws.StringValue(v.HostName))
-				if err == nil {
-					host = parsedHostName.Host
-					path = parsedHostName.Path
-					query = parsedHostName.RawQuery
-				} else {
-					host = aws.StringValue(v.HostName)
-					path = ""
-				}
-
-				w["redirect_all_requests_to"] = (&url.URL{
-					Host:     host,
-					Path:     path,
-					Scheme:   aws.StringValue(v.Protocol),
-					RawQuery: query,
-				}).String()
-			}
-		}
-
-		if v := ws.RoutingRules; v != nil {
-			rr, err := normalizeRoutingRules(v)
-			if err != nil {
-				return fmt.Errorf("Error while marshaling routing rules: %s", err)
-			}
-			w["routing_rules"] = rr
-		}
-
-		// We have special handling for the website configuration,
-		// so only add the configuration if there is any
-		if len(w) > 0 {
-			websites = append(websites, w)
-		}
-	}
-	if err := d.Set("website", websites); err != nil {
-		return fmt.Errorf("error setting website: %s", err)
 	}
 
 	// Read the versioning configuration
@@ -965,20 +843,6 @@ func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 	}
 	d.Set("bucket_regional_domain_name", regionalEndpoint)
 
-	// Add website_endpoint as an attribute
-	websiteEndpoint, err := websiteEndpoint(meta.(*AWSClient), d)
-	if err != nil {
-		return err
-	}
-	if websiteEndpoint != nil {
-		if err := d.Set("website_endpoint", websiteEndpoint.Endpoint); err != nil {
-			return err
-		}
-		if err := d.Set("website_domain", websiteEndpoint.Domain); err != nil {
-			return err
-		}
-	}
-
 	arn := arn.ARN{
 		Partition: meta.(*AWSClient).partition,
 		Service:   "s3",
@@ -1209,145 +1073,6 @@ func resourceAwsS3BucketCorsUpdate(s3conn *s3.S3, d *schema.ResourceData) error 
 	return nil
 }
 
-func resourceAwsS3BucketWebsiteUpdate(s3conn *s3.S3, d *schema.ResourceData) error {
-	ws := d.Get("website").([]interface{})
-
-	if len(ws) == 0 {
-		return resourceAwsS3BucketWebsiteDelete(s3conn, d)
-	}
-
-	var w map[string]interface{}
-	if ws[0] != nil {
-		w = ws[0].(map[string]interface{})
-	} else {
-		w = make(map[string]interface{})
-	}
-	return resourceAwsS3BucketWebsitePut(s3conn, d, w)
-}
-
-func resourceAwsS3BucketWebsitePut(s3conn *s3.S3, d *schema.ResourceData, website map[string]interface{}) error {
-	bucket := d.Get("bucket").(string)
-
-	var indexDocument, errorDocument, redirectAllRequestsTo, routingRules string
-	if v, ok := website["index_document"]; ok {
-		indexDocument = v.(string)
-	}
-	if v, ok := website["error_document"]; ok {
-		errorDocument = v.(string)
-	}
-	if v, ok := website["redirect_all_requests_to"]; ok {
-		redirectAllRequestsTo = v.(string)
-	}
-	if v, ok := website["routing_rules"]; ok {
-		routingRules = v.(string)
-	}
-
-	if indexDocument == "" && redirectAllRequestsTo == "" {
-		return fmt.Errorf("Must specify either index_document or redirect_all_requests_to.")
-	}
-
-	websiteConfiguration := &s3.WebsiteConfiguration{}
-
-	if indexDocument != "" {
-		websiteConfiguration.IndexDocument = &s3.IndexDocument{Suffix: aws.String(indexDocument)}
-	}
-
-	if errorDocument != "" {
-		websiteConfiguration.ErrorDocument = &s3.ErrorDocument{Key: aws.String(errorDocument)}
-	}
-
-	if redirectAllRequestsTo != "" {
-		redirect, err := url.Parse(redirectAllRequestsTo)
-		if err == nil && redirect.Scheme != "" {
-			var redirectHostBuf bytes.Buffer
-			redirectHostBuf.WriteString(redirect.Host)
-			if redirect.Path != "" {
-				redirectHostBuf.WriteString(redirect.Path)
-			}
-			if redirect.RawQuery != "" {
-				redirectHostBuf.WriteString("?")
-				redirectHostBuf.WriteString(redirect.RawQuery)
-			}
-			websiteConfiguration.RedirectAllRequestsTo = &s3.RedirectAllRequestsTo{HostName: aws.String(redirectHostBuf.String()), Protocol: aws.String(redirect.Scheme)}
-		} else {
-			websiteConfiguration.RedirectAllRequestsTo = &s3.RedirectAllRequestsTo{HostName: aws.String(redirectAllRequestsTo)}
-		}
-	}
-
-	if routingRules != "" {
-		var unmarshaledRules []*s3.RoutingRule
-		if err := json.Unmarshal([]byte(routingRules), &unmarshaledRules); err != nil {
-			return err
-		}
-		websiteConfiguration.RoutingRules = unmarshaledRules
-	}
-
-	putInput := &s3.PutBucketWebsiteInput{
-		Bucket:               aws.String(bucket),
-		WebsiteConfiguration: websiteConfiguration,
-	}
-
-	log.Printf("[DEBUG] S3 put bucket website: %#v", putInput)
-
-	_, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return s3conn.PutBucketWebsite(putInput)
-	})
-	if err != nil {
-		return fmt.Errorf("Error putting S3 website: %s", err)
-	}
-
-	return nil
-}
-
-func resourceAwsS3BucketWebsiteDelete(s3conn *s3.S3, d *schema.ResourceData) error {
-	bucket := d.Get("bucket").(string)
-	deleteInput := &s3.DeleteBucketWebsiteInput{Bucket: aws.String(bucket)}
-
-	log.Printf("[DEBUG] S3 delete bucket website: %#v", deleteInput)
-
-	_, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return s3conn.DeleteBucketWebsite(deleteInput)
-	})
-	if err != nil {
-		return fmt.Errorf("Error deleting S3 website: %s", err)
-	}
-
-	d.Set("website_endpoint", "")
-	d.Set("website_domain", "")
-
-	return nil
-}
-
-func websiteEndpoint(client *AWSClient, d *schema.ResourceData) (*S3Website, error) {
-	// If the bucket doesn't have a website configuration, return an empty
-	// endpoint
-	if _, ok := d.GetOk("website"); !ok {
-		return nil, nil
-	}
-
-	bucket := d.Get("bucket").(string)
-
-	// Lookup the region for this bucket
-
-	locationResponse, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return client.s3conn.GetBucketLocation(
-			&s3.GetBucketLocationInput{
-				Bucket: aws.String(bucket),
-			},
-		)
-	})
-	if err != nil {
-		return nil, err
-	}
-	location := locationResponse.(*s3.GetBucketLocationOutput)
-	var region string
-	if location.LocationConstraint != nil {
-		region = aws.StringValue(location.LocationConstraint)
-	}
-
-	return WebsiteEndpoint(client, bucket, region), nil
-}
-
 // https://docs.aws.amazon.com/general/latest/gr/rande.html#s3_region
 func BucketRegionalDomainName(bucket string, region string) (string, error) {
 	// Return a default AWS Commercial domain name if no region is provided
@@ -1360,23 +1085,6 @@ func BucketRegionalDomainName(bucket string, region string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%s.%s", bucket, strings.TrimPrefix(endpoint.URL, "https://")), nil
-}
-
-func WebsiteEndpoint(client *AWSClient, bucket string, region string) *S3Website {
-	domain := WebsiteDomainUrl(client, region)
-	return &S3Website{Endpoint: fmt.Sprintf("%s.%s", bucket, domain), Domain: domain}
-}
-
-func WebsiteDomainUrl(client *AWSClient, region string) string {
-	region = normalizeRegion(region)
-
-	// Different regions have different syntax for website endpoints
-	// https://docs.aws.amazon.com/AmazonS3/latest/dev/WebsiteEndpoints.html
-	// https://docs.aws.amazon.com/general/latest/gr/rande.html#s3_website_region_endpoints
-	if isOldRegion(region) {
-		return fmt.Sprintf("s3-website-%s.amazonaws.com", region) //lintignore:AWSR001
-	}
-	return client.RegionalHostname("s3-website")
 }
 
 func isOldRegion(region string) bool {
@@ -1930,10 +1638,6 @@ func sourceSseKmsObjectsHash(v interface{}) int {
 		buf.WriteString(fmt.Sprintf("%t-", v.(bool)))
 	}
 	return hashcode.String(buf.String())
-}
-
-type S3Website struct {
-	Endpoint, Domain string
 }
 
 func flattenGrants(ap *s3.GetBucketAclOutput) []interface{} {

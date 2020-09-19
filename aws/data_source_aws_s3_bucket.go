@@ -42,14 +42,6 @@ func dataSourceAwsS3Bucket() *schema.Resource {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
-			"website_endpoint": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"website_domain": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
 		},
 	}
 }
@@ -108,20 +100,5 @@ func bucketLocation(client *AWSClient, d *schema.ResourceData, bucket string) er
 		return err
 	}
 
-	_, websiteErr := client.s3conn.GetBucketWebsite(
-		&s3.GetBucketWebsiteInput{
-			Bucket: aws.String(bucket),
-		},
-	)
-
-	if websiteErr == nil {
-		websiteEndpoint := WebsiteEndpoint(client, bucket, region)
-		if err := d.Set("website_endpoint", websiteEndpoint.Endpoint); err != nil {
-			return err
-		}
-		if err := d.Set("website_domain", websiteEndpoint.Domain); err != nil {
-			return err
-		}
-	}
 	return nil
 }

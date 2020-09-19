@@ -92,10 +92,6 @@ func dataSourceAwsS3BucketObject() *schema.Resource {
 				Optional: true,
 				Computed: true,
 			},
-			"website_redirect_location": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
 		},
 	}
 }
@@ -152,7 +148,6 @@ func dataSourceAwsS3BucketObjectRead(d *schema.ResourceData, meta interface{}) e
 	d.Set("metadata", pointersMapToStringList(out.Metadata))
 	d.Set("sse_kms_key_id", out.SSEKMSKeyId)
 	d.Set("version_id", out.VersionId)
-	d.Set("website_redirect_location", out.WebsiteRedirectLocation)
 
 	// The "STANDARD" (which is also the default) storage
 	// class when set would not be included in the results.
