@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -124,15 +123,6 @@ func resourceAwsS3BucketObject() *schema.Resource {
 				}, false),
 			},
 
-			"server_side_encryption": {
-				Type:     schema.TypeString,
-				Optional: true,
-				ValidateFunc: validation.StringInSlice([]string{
-					s3.ServerSideEncryptionAes256,
-				}, false),
-				Computed: true,
-			},
-
 			"etag": {
 				Type: schema.TypeString,
 				// This will conflict with SSE-C and multi-part upload
@@ -156,30 +146,6 @@ func resourceAwsS3BucketObject() *schema.Resource {
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  false,
-			},
-
-			"object_lock_legal_hold_status": {
-				Type:     schema.TypeString,
-				Optional: true,
-				ValidateFunc: validation.StringInSlice([]string{
-					s3.ObjectLockLegalHoldStatusOn,
-					s3.ObjectLockLegalHoldStatusOff,
-				}, false),
-			},
-
-			"object_lock_mode": {
-				Type:     schema.TypeString,
-				Optional: true,
-				ValidateFunc: validation.StringInSlice([]string{
-					s3.ObjectLockModeGovernance,
-					s3.ObjectLockModeCompliance,
-				}, false),
-			},
-
-			"object_lock_retain_until_date": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				ValidateFunc: validation.IsRFC3339Time,
 			},
 		},
 	}
@@ -260,24 +226,8 @@ func resourceAwsS3BucketObjectPut(d *schema.ResourceData, meta interface{}) erro
 		putInput.ContentDisposition = aws.String(v.(string))
 	}
 
-	if v, ok := d.GetOk("server_side_encryption"); ok {
-		putInput.ServerSideEncryption = aws.String(v.(string))
-	}
-
 	if v, ok := d.GetOk("website_redirect"); ok {
 		putInput.WebsiteRedirectLocation = aws.String(v.(string))
-	}
-
-	if v, ok := d.GetOk("object_lock_legal_hold_status"); ok {
-		putInput.ObjectLockLegalHoldStatus = aws.String(v.(string))
-	}
-
-	if v, ok := d.GetOk("object_lock_mode"); ok {
-		putInput.ObjectLockMode = aws.String(v.(string))
-	}
-
-	if v, ok := d.GetOk("object_lock_retain_until_date"); ok {
-		putInput.ObjectLockRetainUntilDate = expandS3ObjectLockRetainUntilDate(v.(string))
 	}
 
 	if _, err := s3conn.PutObject(putInput); err != nil {
@@ -332,11 +282,7 @@ func resourceAwsS3BucketObjectRead(d *schema.ResourceData, meta interface{}) err
 		return fmt.Errorf("error setting metadata: %s", err)
 	}
 	d.Set("version_id", resp.VersionId)
-	d.Set("server_side_encryption", resp.ServerSideEncryption)
 	d.Set("website_redirect", resp.WebsiteRedirectLocation)
-	d.Set("object_lock_legal_hold_status", resp.ObjectLockLegalHoldStatus)
-	d.Set("object_lock_mode", resp.ObjectLockMode)
-	d.Set("object_lock_retain_until_date", flattenS3ObjectLockRetainUntilDate(resp.ObjectLockRetainUntilDate))
 
 	// See https://forums.aws.amazon.com/thread.jspa?threadID=44003
 	d.Set("etag", strings.Trim(aws.StringValue(resp.ETag), `"`))
@@ -363,7 +309,6 @@ func resourceAwsS3BucketObjectUpdate(d *schema.ResourceData, meta interface{}) e
 		"content",
 		"etag",
 		"metadata",
-		"server_side_encryption",
 		"source",
 		"storage_class",
 		"website_redirect",
@@ -386,45 +331,6 @@ func resourceAwsS3BucketObjectUpdate(d *schema.ResourceData, meta interface{}) e
 		})
 		if err != nil {
 			return fmt.Errorf("error putting S3 object ACL: %s", err)
-		}
-	}
-
-	if d.HasChange("object_lock_legal_hold_status") {
-		_, err := conn.PutObjectLegalHold(&s3.PutObjectLegalHoldInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-			LegalHold: &s3.ObjectLockLegalHold{
-				Status: aws.String(d.Get("object_lock_legal_hold_status").(string)),
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("error putting S3 object lock legal hold: %s", err)
-		}
-	}
-
-	if d.HasChanges("object_lock_mode", "object_lock_retain_until_date") {
-		req := &s3.PutObjectRetentionInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-			Retention: &s3.ObjectLockRetention{
-				Mode:            aws.String(d.Get("object_lock_mode").(string)),
-				RetainUntilDate: expandS3ObjectLockRetainUntilDate(d.Get("object_lock_retain_until_date").(string)),
-			},
-		}
-
-		// Bypass required to lower or clear retain-until date.
-		if d.HasChange("object_lock_retain_until_date") {
-			oraw, nraw := d.GetChange("object_lock_retain_until_date")
-			o := expandS3ObjectLockRetainUntilDate(oraw.(string))
-			n := expandS3ObjectLockRetainUntilDate(nraw.(string))
-			if n == nil || (o != nil && n.Before(*o)) {
-				req.BypassGovernanceRetention = aws.Bool(true)
-			}
-		}
-
-		_, err := conn.PutObjectRetention(req)
-		if err != nil {
-			return fmt.Errorf("error putting S3 object lock retention: %s", err)
 		}
 	}
 
@@ -499,51 +405,6 @@ func deleteAllS3ObjectVersions(conn *s3.S3, bucketName, key string, force, ignor
 			}
 
 			err := deleteS3ObjectVersion(conn, bucketName, objectKey, objectVersionID, force)
-			if isAWSErr(err, "AccessDenied", "") && force {
-				// Remove any legal hold.
-				resp, err := conn.HeadObject(&s3.HeadObjectInput{
-					Bucket:    aws.String(bucketName),
-					Key:       objectVersion.Key,
-					VersionId: objectVersion.VersionId,
-				})
-
-				if err != nil {
-					log.Printf("[ERROR] Error getting S3 Bucket (%s) Object (%s) Version (%s) metadata: %s", bucketName, objectKey, objectVersionID, err)
-					lastErr = err
-					continue
-				}
-
-				if aws.StringValue(resp.ObjectLockLegalHoldStatus) == s3.ObjectLockLegalHoldStatusOn {
-					_, err := conn.PutObjectLegalHold(&s3.PutObjectLegalHoldInput{
-						Bucket:    aws.String(bucketName),
-						Key:       objectVersion.Key,
-						VersionId: objectVersion.VersionId,
-						LegalHold: &s3.ObjectLockLegalHold{
-							Status: aws.String(s3.ObjectLockLegalHoldStatusOff),
-						},
-					})
-
-					if err != nil {
-						log.Printf("[ERROR] Error putting S3 Bucket (%s) Object (%s) Version(%s) legal hold: %s", bucketName, objectKey, objectVersionID, err)
-						lastErr = err
-						continue
-					}
-
-					// Attempt to delete again.
-					err = deleteS3ObjectVersion(conn, bucketName, objectKey, objectVersionID, force)
-
-					if err != nil {
-						lastErr = err
-					}
-
-					continue
-				}
-
-				// AccessDenied for another reason.
-				lastErr = fmt.Errorf("AccessDenied deleting S3 Bucket (%s) Object (%s) Version: %s", bucketName, objectKey, objectVersionID)
-				continue
-			}
-
 			if err != nil {
 				lastErr = err
 			}
@@ -639,21 +500,4 @@ func deleteS3ObjectVersion(conn *s3.S3, b, k, v string, force bool) error {
 	}
 
 	return err
-}
-
-func expandS3ObjectLockRetainUntilDate(v string) *time.Time {
-	t, err := time.Parse(time.RFC3339, v)
-	if err != nil {
-		return nil
-	}
-
-	return aws.Time(t)
-}
-
-func flattenS3ObjectLockRetainUntilDate(t *time.Time) string {
-	if t == nil {
-		return ""
-	}
-
-	return t.Format(time.RFC3339)
 }
