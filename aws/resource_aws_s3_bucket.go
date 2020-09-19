@@ -159,12 +159,6 @@ func resourceAwsS3Bucket() *schema.Resource {
 				},
 			},
 
-			"hosted_zone_id": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Computed: true,
-			},
-
 			"region": {
 				Type:     schema.TypeString,
 				Computed: true,
@@ -328,16 +322,6 @@ func resourceAwsS3Bucket() *schema.Resource {
 				Default:  false,
 			},
 
-			"acceleration_status": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Computed: true,
-				ValidateFunc: validation.StringInSlice([]string{
-					s3.BucketAccelerateStatusEnabled,
-					s3.BucketAccelerateStatusSuspended,
-				}, false),
-			},
-
 			"request_payer": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -460,12 +444,6 @@ func resourceAwsS3BucketUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	if d.HasChange("lifecycle_rule") {
 		if err := resourceAwsS3BucketLifecycleUpdate(s3conn, d); err != nil {
-			return err
-		}
-	}
-
-	if d.HasChange("acceleration_status") {
-		if err := resourceAwsS3BucketAccelerationUpdate(s3conn, d); err != nil {
 			return err
 		}
 	}
@@ -635,22 +613,6 @@ func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 	}
 	if err := d.Set("versioning", vcl); err != nil {
 		return fmt.Errorf("error setting versioning: %s", err)
-	}
-
-	// Read the acceleration status
-
-	accelerateResponse, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return s3conn.GetBucketAccelerateConfiguration(&s3.GetBucketAccelerateConfigurationInput{
-			Bucket: aws.String(d.Id()),
-		})
-	})
-
-	// Amazon S3 Transfer Acceleration might not be supported in the region
-	if err != nil && !isAWSErr(err, "MethodNotAllowed", "") && !isAWSErr(err, "UnsupportedArgument", "") {
-		return fmt.Errorf("error getting S3 Bucket acceleration configuration: %s", err)
-	}
-	if accelerate, ok := accelerateResponse.(*s3.GetBucketAccelerateConfigurationOutput); ok {
-		d.Set("acceleration_status", accelerate.Status)
 	}
 
 	// Read the request payer configuration.
@@ -1197,28 +1159,6 @@ func resourceAwsS3BucketLoggingUpdate(s3conn *s3.S3, d *schema.ResourceData) err
 	})
 	if err != nil {
 		return fmt.Errorf("Error putting S3 logging: %s", err)
-	}
-
-	return nil
-}
-
-func resourceAwsS3BucketAccelerationUpdate(s3conn *s3.S3, d *schema.ResourceData) error {
-	bucket := d.Get("bucket").(string)
-	enableAcceleration := d.Get("acceleration_status").(string)
-
-	i := &s3.PutBucketAccelerateConfigurationInput{
-		Bucket: aws.String(bucket),
-		AccelerateConfiguration: &s3.AccelerateConfiguration{
-			Status: aws.String(enableAcceleration),
-		},
-	}
-	log.Printf("[DEBUG] S3 put bucket acceleration: %#v", i)
-
-	_, err := retryOnAwsCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return s3conn.PutBucketAccelerateConfiguration(i)
-	})
-	if err != nil {
-		return fmt.Errorf("Error putting S3 acceleration: %s", err)
 	}
 
 	return nil
