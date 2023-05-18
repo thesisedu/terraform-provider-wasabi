@@ -784,8 +784,12 @@ func resourceAwsS3BucketRead(d *schema.ResourceData, meta interface{}) error {
 		if err != nil {
 			return nil, err
 		}
+		location := "us-east-1"
+		if res.LocationConstraint != nil {
+			location = *res.LocationConstraint
+		}
 
-		return s3.NormalizeBucketLocation(*res.LocationConstraint), nil
+		return s3.NormalizeBucketLocation(location), nil
 	})
 	if err != nil {
 		return fmt.Errorf("error getting S3 Bucket location: %s", err)
