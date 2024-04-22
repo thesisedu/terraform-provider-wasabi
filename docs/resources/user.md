@@ -32,3 +32,9 @@ description: |-
 - `unique_id` (String)
 
 
+## import 
+
+wasabi user can be imported using the path, e.g.
+```
+$ terraform import wasabi_user.myuser myuser
+```

@@ -32,3 +32,9 @@ description: |-
 - `arn` (String)
 
 
+## import 
+
+wasabi policy can be imported using the path, e.g.
+```
+$ terraform import wasabi_policy.mypolicy arn:aws:iam::00000000000:policy/mypolicyname
+```
