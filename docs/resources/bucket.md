@@ -147,4 +147,9 @@ Optional:
 - `enabled` (Boolean)
 - `mfa_delete` (Boolean)
 
+## import 
 
+wasabi bucket can be imported using the path, e.g.
+```
+$ terraform import wasabi_bucket.mybucket mybucket
+```

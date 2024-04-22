@@ -25,3 +25,9 @@ description: |-
 - `id` (String) The ID of this resource.
 
 
+## import 
+
+wasabi policy attachment can be imported using the path, e.g.
+```
+$ terraform import wasabi_user_policy_attachment.mypolicyattach myuser/arn:aws:iam::00000000000:policy/mypolicyname
+```
